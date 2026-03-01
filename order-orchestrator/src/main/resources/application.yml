@@ -1,22 +1,26 @@
+
 spring:
   application:
     name: order-orchestrator
+
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/orders}
     username: ${SPRING_DATASOURCE_USERNAME:user}
     password: ${SPRING_DATASOURCE_PASSWORD:pass}
+
   liquibase:
     change-log: classpath:/db/changelog/changelog-master.yaml
+
   docker:
     compose:
-      file: ./order-orchestrator/docker-compose.dev.yaml
-      lifecycle-management: start-and-stop   # поднимает при старте, останавливает при завершении
+      file: ./infra/docker-compose.dev.yaml
+      lifecycle-management: start-only        # поднимает при старте, не останавливает при завершении
       start:
-        command: up                         # использовать `docker compose up`
-        arguments: --force-recreate         # ВСЕГДА пересоздавать контейнеры
-      stop:
-        command: down                     # полностью закрывает контейнеры
-        arguments: -v
+        command: up                           # использовать `docker compose up`
+        # arguments: --force-recreate         # При включении будут постоянно пересоздаваться контейнеры
+      # stop:
+      #   command: down                       # Не выполнять down автоматически
+      #   arguments: -v                       # -v удаляет volumes и сбрасывает базу данных
 
 # настройки Swagger
 springdoc:
@@ -24,4 +28,30 @@ springdoc:
     path: /swagger-ui
 
 payment:
-  stub-url: ${PAYMENT_STUB_URL:http://localhost:8081}
+  stub-url: ${PAYMENT_STUB_URL:http://localhost:8084}
+
+# настройки HTTP-клиентов
+clients:
+  payment:
+    base-url: ${PAYMENT_STUB_BASE_URL:http://localhost:8084/payment}
+    connect-timeout: 2s
+    read-timeout: 2s
+  warehouse:
+    base-url: ${WAREHOUSE_BASE_URL:http://localhost:8084/warehouse}
+    connect-timeout: 2s
+    read-timeout: 2s
+
+# настройки выполнения задач
+task-execution:
+  dispatcher:
+    thread-pool-size: ${TASK_EXEC_DISPATCHER_THREAD_POOL_SIZE:12}
+    retry-delay: ${TASK_EXEC_DISPATCHER_RETRY_DELAY:5s}
+    max-attempts: ${TASK_EXEC_DISPATCHER_MAX_ATTEMPTS:20}
+
+  poller:
+    poll-interval-ms: ${TASK_EXEC_POOL_INTERVAL_MS:1000}
+    batch-size: ${TASK_EXEC_POOL_BATCH_SIZE:10}
+    retry-delay: ${TASK_EXEC_POOL_RETRY_DELAY_MS:30s}
+
+  external-http:
+    thread-pool-size: 12

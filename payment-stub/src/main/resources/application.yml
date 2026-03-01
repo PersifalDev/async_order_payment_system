@@ -26,4 +26,4 @@ springdoc:
   swagger-ui:
     path: /swagger-ui
 server:
-  port: ${SERVER_PORT:8081}
+  port: ${SERVER_PORT:8084}

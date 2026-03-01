@@ -19,6 +19,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-web")
     developmentOnly("org.springframework.boot:spring-boot-docker-compose")
+    implementation("org.springframework.boot:spring-boot-starter-validation")
 
     // additional libs
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0")

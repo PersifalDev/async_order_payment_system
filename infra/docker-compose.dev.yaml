@@ -1,3 +1,4 @@
+
 services:
   postgres:
     image: postgres:18
@@ -7,6 +8,8 @@ services:
       POSTGRES_PASSWORD: pass
     ports:
       - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
 
   payment-stub:
     image: payment-stub:latest
@@ -14,9 +17,9 @@ services:
       context: ..
       dockerfile: payment-stub/Dockerfile
     environment:
-      SERVER_PORT: 8081
+      SERVER_PORT: 8084
     ports:
-      - "8081:8081"
+      - "8084:8084"
 
   order-orchestrator:
     image: order-orchestrator:latest
@@ -25,12 +28,27 @@ services:
       dockerfile: order-orchestrator/Dockerfile
     environment:
       SERVER_PORT: 8080
+
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orders
       SPRING_DATASOURCE_USERNAME: user
       SPRING_DATASOURCE_PASSWORD: pass
-      PAYMENT_STUB_URL: http://payment-stub:8081
+
+      PAYMENT_STUB_URL: http://payment-stub:8084
+      PAYMENT_STUB_BASE_URL: http://payment-stub:8084/payment
+      WAREHOUSE_BASE_URL: http://payment-stub:8084/warehouse
+
+      # если нужно, можно переопределять настройки execution через env:
+      # TASK_EXECUTION_DISPATCHER_THREAD_POOL_SIZE: 12
+      # TASK_EXECUTION_DISPATCHER_RETRY_DELAY: 5s
+      # TASK_EXECUTION_DISPATCHER_MAX_ATTEMPTS: 100
+      # TASK_EXECUTION_EXTERNAL_HTTP_THREAD_POOL_SIZE: 12
+
     ports:
       - "8080:8080"
     depends_on:
       - postgres
       - payment-stub
+
+volumes:
+  pgdata:
+    external: true
