@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+
 
 FROM gradle:8.10.2-jdk21 AS builder
 WORKDIR /workspace

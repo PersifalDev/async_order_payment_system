@@ -14,13 +14,10 @@ spring:
   docker:
     compose:
       file: ./infra/docker-compose.dev.yaml
-      lifecycle-management: start-only        # поднимает при старте, не останавливает при завершении
+      lifecycle-management: start-only
       start:
-        command: up                           # использовать `docker compose up`
-        # arguments: --force-recreate         # При включении будут постоянно пересоздаваться контейнеры
-      # stop:
-      #   command: down                       # Не выполнять down автоматически
-      #   arguments: -v                       # -v удаляет volumes и сбрасывает базу данных
+        command: up
+
 
 # настройки Swagger
 springdoc:
@@ -30,7 +27,6 @@ springdoc:
 payment:
   stub-url: ${PAYMENT_STUB_URL:http://localhost:8084}
 
-# настройки HTTP-клиентов
 clients:
   payment:
     base-url: ${PAYMENT_STUB_BASE_URL:http://localhost:8084/payment}
@@ -41,7 +37,6 @@ clients:
     connect-timeout: 2s
     read-timeout: 2s
 
-# настройки выполнения задач
 task-execution:
   dispatcher:
     thread-pool-size: ${TASK_EXEC_DISPATCHER_THREAD_POOL_SIZE:12}

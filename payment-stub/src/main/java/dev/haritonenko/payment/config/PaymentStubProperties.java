@@ -10,9 +10,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.validation.annotation.Validated;
 
-/**
- * Настройки поведения платежного stub'а
- */
 @Getter
 @Setter
 @Validated
