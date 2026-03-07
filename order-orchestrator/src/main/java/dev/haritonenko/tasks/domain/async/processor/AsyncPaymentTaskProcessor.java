@@ -10,6 +10,8 @@ import dev.haritonenko.orders.domain.db.entity.OrderEntity;
 import dev.haritonenko.orders.domain.db.repository.OrderJpaRepository;
 import dev.haritonenko.orders.domain.exception.AuthorizedMoneyAmountLessThanFinalException;
 import dev.haritonenko.orders.domain.exception.CapturingFailedException;
+import dev.haritonenko.orders.domain.exception.IllegalStateOfAuthorizedAmountException;
+import dev.haritonenko.orders.domain.exception.IllegalStateOfFinalAmountException;
 import dev.haritonenko.orders.domain.status.PaymentStatus;
 import dev.haritonenko.orders.external.payment_stub.PaymentStubHttpClient;
 import dev.haritonenko.orders.external.warehouse.WarehouseHttpClient;
@@ -23,9 +25,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 
@@ -47,6 +49,8 @@ public class AsyncPaymentTaskProcessor {
         UUID orderId = task.getOrderId();
         Long taskId = task.getId();
 
+        ProcessingStep stepAtStart = task.getProcessingStep();
+
         boolean orderExists = Boolean.TRUE.equals(transactionTemplate.execute(status ->
                 orderRepository.existsById(orderId)
         ));
@@ -55,66 +59,84 @@ public class AsyncPaymentTaskProcessor {
             return TaskExecutionStatus.NON_RETRYABLE_ERROR;
         }
 
-        transactionTemplate.execute(status -> {
-            task.setProcessingStep(ProcessingStep.AUTH);
-            return null;
-        });
-        logCurrentProcessingStep(task);
-
-        var authorizationPayment = paymentStubHttpClient.authorizePayment(
-                AuthorizePaymentRequestDto.builder()
-                        .customerId(taskId)
-                        .amount(getClientEstimate(orderId))
-                        .build()
-        );
-
-        if (authorizationPayment.status() == AuthorizationStatus.DECLINED) {
-            log.warn("Authorization payment for order with id={} declined", orderId);
+        if (stepAtStart == ProcessingStep.VALIDATE) {
             transactionTemplate.execute(status -> {
-                OrderEntity order = orderRepository.findById(orderId).orElseThrow();
-                order.setPaymentStatus(PaymentStatus.AUTHORIZATION_FAILED);
-                order.setCancellationReason(authorizationPayment.message());
-                orderRepository.save(order);
-
-                task.setStatus(AsyncPaymentTaskStatus.FAILED_NON_RETRYABLE);
+                task.setProcessingStep(ProcessingStep.AUTH);
                 return null;
             });
+            stepAtStart = ProcessingStep.AUTH;
+            logCurrentProcessingStep(task);
+        }
+
+        if (stepAtStart == ProcessingStep.AUTH) {
+
+            logCurrentProcessingStep(task);
+
+            var authorizationPayment = paymentStubHttpClient.authorizePayment(
+                    AuthorizePaymentRequestDto.builder()
+                            .customerId(taskId)
+                            .amount(getClientEstimate(orderId))
+                            .build()
+            );
+
+            if (authorizationPayment.status() == AuthorizationStatus.DECLINED) {
+                log.warn("Authorization payment for order with id={} declined", orderId);
+                transactionTemplate.execute(status -> {
+                    var order = orderRepository.findById(orderId).orElseThrow();
+                    order.setPaymentStatus(PaymentStatus.AUTHORIZATION_FAILED);
+                    order.setCancellationReason(authorizationPayment.message());
+                    orderRepository.save(order);
+
+                    task.setStatus(AsyncPaymentTaskStatus.FAILED_NON_RETRYABLE);
+                    return null;
+                });
+                return TaskExecutionStatus.NON_RETRYABLE_ERROR;
+            }
+
+            log.info("Payment was authorized successfully for order with id={}", orderId);
+            transactionTemplate.execute(status -> {
+                var order = orderRepository.findById(orderId).orElseThrow();
+                order.setAuthorizedAmount(authorizationPayment.authorizedAmount());
+                order.setPaymentStatus(PaymentStatus.AUTHORIZED_SUCCESSFULLY);
+                orderRepository.save(order);
+
+                task.setProcessingStep(ProcessingStep.REPRICE);
+                return null;
+            });
+            logCurrentProcessingStep(task);
+
             return TaskExecutionStatus.SUCCESS;
         }
 
-        log.info("Payment was authorized successfully for order with id={}", orderId);
-        transactionTemplate.execute(status -> {
-            var order = orderRepository.findById(orderId).orElseThrow();
-            order.setAuthorizedAmount(authorizationPayment.authorizedAmount());
-            order.setPaymentStatus(PaymentStatus.AUTHORIZED_SUCCESSFULLY);
-            orderRepository.save(order);
-
-            task.setProcessingStep(ProcessingStep.REPRICE);
-            return null;
-        });
-        logCurrentProcessingStep(task);
-
-        CompletableFuture<Optional<CalculatePricingResponseDto>> repricingFuture =
-                CompletableFuture.supplyAsync(() -> warehouseHttpClient.calculatePricing(
+        try {
+            if (stepAtStart == ProcessingStep.REPRICE) {
+                CompletableFuture<CalculatePricingResponseDto> repricingFuture = CompletableFuture
+                        .supplyAsync(() -> warehouseHttpClient.calculatePricing(
                                 CalculatePricingRequestDto.builder()
                                         .orderId(orderId)
                                         .build()
                         ), externalHttpThreadPool)
-                        .thenApplyAsync(repricing ->
+                        .thenApplyAsync(warehouseRepricingResult ->
                                 transactionTemplate.execute(status -> {
 
-                                    OrderEntity order = orderRepository.findById(orderId).orElseThrow();
+                                    var order = orderRepository.findById(orderId).orElseThrow();
 
                                     BigDecimal authorizedAmount = order.getAuthorizedAmount();
-                                    BigDecimal finalAmount = repricing.finalAmount();
+                                    BigDecimal finalAmount = warehouseRepricingResult.finalAmount();
 
                                     if (authorizedAmount == null) {
                                         log.warn("Authorized amount is null before repricing compare: orderId={}", orderId);
-                                        throw new IllegalStateException("Authorized amount is null");
+                                        throw new IllegalStateOfAuthorizedAmountException(
+                                                "Authorized amount is null before repricing (orderId=%s, taskId=%s)"
+                                                        .formatted(orderId, taskId)
+                                        );
                                     }
                                     if (finalAmount == null) {
                                         log.warn("Final amount is null in repricing response: orderId={}", orderId);
-                                        throw new IllegalStateException("Final amount is null");
+                                        throw new IllegalStateOfFinalAmountException(
+                                                "Final amount is null in repricing response (orderId=%s, taskId=%s)"
+                                                        .formatted(orderId, taskId)
+                                        );
                                     }
 
                                     if (finalAmount.compareTo(authorizedAmount) > 0) {
@@ -128,7 +150,8 @@ public class AsyncPaymentTaskProcessor {
                                         orderRepository.save(order);
 
                                         task.setStatus(AsyncPaymentTaskStatus.FAILED_NON_RETRYABLE);
-                                        return Optional.<CalculatePricingResponseDto>empty();
+
+                                        throw new AuthorizedMoneyAmountLessThanFinalException("Final sum more than authorized");
                                     }
 
                                     log.info("Repricing was completed successfully for order with id={}", orderId);
@@ -137,106 +160,60 @@ public class AsyncPaymentTaskProcessor {
                                     orderRepository.save(order);
 
                                     task.setProcessingStep(ProcessingStep.CAPTURE);
-                                    return Optional.of(repricing);
+
+                                    return warehouseRepricingResult;
                                 }), externalHttpThreadPool)
-                        .handleAsync((opt, ex) -> {
+                        .handleAsync((result, ex) -> {
                             if (ex == null) {
-                                return opt;
+                                return result;
                             }
 
                             Throwable exception = unwrap(ex);
                             log.warn("Handling exception={} in repricing stage", exception.getClass().getSimpleName());
 
-                            if (exception instanceof AuthorizedMoneyAmountLessThanFinalException) {
-                                transactionTemplate.execute(status -> {
-                                    OrderEntity order = orderRepository.findById(orderId).orElseThrow();
-                                    order.setPaymentStatus(PaymentStatus.PRICE_CHANGED_FAILED);
-                                    order.setCancellationReason(exception.getMessage());
-                                    orderRepository.save(order);
-
-                                    task.setStatus(AsyncPaymentTaskStatus.FAILED_NON_RETRYABLE);
-                                    return null;
-                                });
-                                return Optional.empty();
-                            }
-
-                            if (exception instanceof IllegalStateException) {
-                                return Optional.empty();
-                            }
-
-                            throw new RuntimeException(exception);
+                            throw new CompletionException(exception);
                         }, externalHttpThreadPool);
 
-        try {
-            repricingFuture
-                    .thenCompose(optRepricing -> {
+                repricingFuture
+                        .thenCompose(warehouseRepricingResult -> {
+                            var optionalOrder = transactionTemplate.execute(status ->
+                                    orderRepository.findById(orderId)
+                            );
 
-                        if (optRepricing.isEmpty()) {
-                            return CompletableFuture.completedFuture(Optional.empty());
-                        }
+                            if (optionalOrder.isEmpty()) {
+                                log.warn("Error while searching for order with id={}", orderId);
+                                throw new IllegalStateException(
+                                        "Order not found before capture (orderId=%s, taskId=%s)"
+                                                .formatted(orderId, taskId)
+                                );
+                            }
 
-                        return CompletableFuture.supplyAsync(() -> {
+                            return getCapturePaymentFuture(optionalOrder.get(), task);
+                        })
+                        .get();
+                task.setStatus(AsyncPaymentTaskStatus.SUCCEEDED);
 
-                                    BigDecimal finalAmount = transactionTemplate.execute(status -> {
-                                        OrderEntity order = orderRepository.findById(orderId).orElseThrow();
-                                        return order.getFinalAmount();
-                                    });
+                return TaskExecutionStatus.SUCCESS;
+            }
 
-                                    if (finalAmount == null) {
-                                        throw new IllegalStateException("Final amount is null before capture");
-                                    }
+            if (stepAtStart == ProcessingStep.CAPTURE) {
+                var optionalOrder = transactionTemplate.execute(status ->
+                        orderRepository.findById(orderId)
+                );
 
-                                    return paymentStubHttpClient.capturePayment(
-                                            CapturePaymentRequestDto.builder()
-                                                    .captureAmount(finalAmount)
-                                                    .customerId(taskId)
-                                                    .build()
-                                    );
-                                }, externalHttpThreadPool)
-                                .thenApplyAsync(capture -> transactionTemplate.execute(status -> {
+                if (optionalOrder.isEmpty()) {
+                    log.warn("Error while finding order with id={}", orderId);
+                    return TaskExecutionStatus.NON_RETRYABLE_ERROR;
+                }
 
-                                    if (capture.status() == CaptureStatus.FAILED) {
-                                        log.warn("Capturing was rejected for order with id={}", orderId);
-                                        var order = orderRepository.findById(orderId).orElseThrow();
-                                        order.setPaymentStatus(PaymentStatus.CAPTURE_FAILED);
-                                        order.setCancellationReason("Capture failed by stub");
-                                        orderRepository.save(order);
+                getCapturePaymentFuture(optionalOrder.get(), task).get();
+                task.setStatus(AsyncPaymentTaskStatus.SUCCEEDED);
+                return TaskExecutionStatus.SUCCESS;
+            }
 
-                                        task.setStatus(AsyncPaymentTaskStatus.FAILED_NON_RETRYABLE);
-                                        throw new CapturingFailedException("Capture failed by stub");
-                                    }
-
-                                    log.info("Capturing was completed successfully for order with id={}", orderId);
-
-                                    var order = orderRepository.findById(orderId).orElseThrow();
-                                    order.setCapturedAmount(capture.capturedAmount());
-                                    order.setPaymentStatus(PaymentStatus.SUCCEED_PAID);
-                                    orderRepository.save(order);
-
-                                    log.info("Order with orderId={} successfully paid", orderId);
-
-                                    return Optional.of(capture);
-                                }), externalHttpThreadPool)
-                                .handleAsync((res, ex) -> {
-                                    if (ex == null) {
-                                        return res;
-                                    }
-
-                                    Throwable exception = unwrap(ex);
-                                    log.warn("Handling exception={} in capturing stage", exception.getClass().getSimpleName());
-
-                                    if (exception instanceof CapturingFailedException) {
-                                        return Optional.empty();
-                                    }
-
-                                    if (exception instanceof IllegalStateException) {
-                                        return Optional.empty();
-                                    }
-
-                                    throw new RuntimeException(exception);
-                                }, externalHttpThreadPool);
-                    })
-                    .get();
+            log.warn("Unsupported processing step: orderId={}, taskId={}, step={}",
+                    orderId, taskId, stepAtStart);
+            return TaskExecutionStatus.RETRYABLE_ERROR;
 
         } catch (InterruptedException ex) {
             log.warn("Thread={} was interrupted by exception ex={}",
@@ -245,16 +222,98 @@ public class AsyncPaymentTaskProcessor {
             );
             Thread.currentThread().interrupt();
             return TaskExecutionStatus.RETRYABLE_ERROR;
+
         } catch (ExecutionException ex) {
+            Throwable exception = unwrap(ex);
+
             log.warn("Exception while creating order: orderId={},taskId={}",
                     orderId,
                     taskId,
-                    ex
+                    exception
             );
+
+            if (exception instanceof AuthorizedMoneyAmountLessThanFinalException
+                    || exception instanceof CapturingFailedException) {
+                return TaskExecutionStatus.NON_RETRYABLE_ERROR;
+            }
+
+            if (exception instanceof IllegalStateOfAuthorizedAmountException
+                    || exception instanceof IllegalStateOfFinalAmountException
+                    || exception instanceof IllegalStateException) {
+                return TaskExecutionStatus.RETRYABLE_ERROR;
+            }
+
             return TaskExecutionStatus.RETRYABLE_ERROR;
         }
+    }
 
-        return TaskExecutionStatus.SUCCESS;
+    private CompletableFuture<Void> getCapturePaymentFuture(
+            OrderEntity orderForCaptureStep,
+            AsyncPaymentTaskEntity task
+    ) {
+        UUID orderId = orderForCaptureStep.getId();
+        Long taskId = task.getId();
+
+        return CompletableFuture
+                .supplyAsync(() -> {
+                    BigDecimal finalAmount = transactionTemplate.execute(status -> {
+                        var order = orderRepository.findById(orderId).orElseThrow();
+                        return order.getFinalAmount();
+                    });
+
+                    if (finalAmount == null) {
+                        log.warn("Error while checking final amount money (orderId={}, taskId={})",
+                                orderId, taskId);
+                        throw new IllegalStateOfFinalAmountException(
+                                "Final amount is null before capture (orderId=%s, taskId=%s)"
+                                        .formatted(orderId, taskId)
+                        );
+                    }
+
+                    return paymentStubHttpClient.capturePayment(
+                            CapturePaymentRequestDto.builder()
+                                    .captureAmount(finalAmount)
+                                    .customerId(taskId)
+                                    .build()
+                    );
+                }, externalHttpThreadPool)
+                .thenApplyAsync(capturingPaymentResult ->
+                        transactionTemplate.execute(status -> {
+
+                            if (capturingPaymentResult.status() == CaptureStatus.FAILED) {
+                                log.warn("Capturing was rejected for order with id={}", orderId);
+
+                                var order = orderRepository.findById(orderId).orElseThrow();
+                                order.setPaymentStatus(PaymentStatus.CAPTURE_FAILED);
+                                order.setCancellationReason("Capture failed by stub");
+                                orderRepository.save(order);
+
+                                task.setStatus(AsyncPaymentTaskStatus.FAILED_NON_RETRYABLE);
+
+                                throw new CapturingFailedException("Capture failed by stub");
+                            }
+
+                            log.info("Capturing was completed successfully for order with id={}", orderId);
+
+                            var order = orderRepository.findById(orderId).orElseThrow();
+                            order.setCapturedAmount(capturingPaymentResult.capturedAmount());
+                            order.setPaymentStatus(PaymentStatus.SUCCEED_PAID);
+                            orderRepository.save(order);
+
+                            log.info("Order with orderId={} successfully paid", orderId);
+
+                            return null;
+                        }), externalHttpThreadPool)
+                .handleAsync((res, ex) -> {
+                    if (ex == null) {
+                        return null;
+                    }
+
+                    Throwable exception = unwrap(ex);
+                    log.warn("Handling exception={} in capturing stage", exception.getClass().getSimpleName());
+
+                    throw new CompletionException(exception);
+                }, externalHttpThreadPool);
     }
 
     private BigDecimal getClientEstimate(UUID orderId) {
@@ -270,7 +329,8 @@ public class AsyncPaymentTaskProcessor {
     private Throwable unwrap(Throwable ex) {
         Throwable current = ex;
         while (current.getCause() != null && (current instanceof RuntimeException
-                || current instanceof ExecutionException)) {
+                || current instanceof ExecutionException
+                || current instanceof CompletionException)) {
             if (current.getCause() == current) break;
             current = current.getCause();
         }

@@ -37,7 +37,7 @@ public class AsyncTaskPoller {
                 .toList();
 
         if (tasksBatch.isEmpty()) {
-            log.warn("No tasks for polling");
+            log.info("No tasks for polling");
             return;
         }
         log.info("Successfully picked tasks: count={}",

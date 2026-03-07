@@ -11,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -80,7 +79,7 @@ public class AsyncPaymentTaskDispatcher {
             return;
         }
 
-        var nextAttemptTime = OffsetDateTime.now().plus(Duration.ofSeconds(5));
+        var nextAttemptTime = OffsetDateTime.now().plus(properties.getRetryDelay());
 
         transactionTemplate.execute(status ->
                 taskRepository.save(task.toBuilder()
@@ -92,17 +91,20 @@ public class AsyncPaymentTaskDispatcher {
 
     private void handleTaskSucceeded(AsyncPaymentTaskEntity task) {
 
-        if (task.getStatus() == AsyncPaymentTaskStatus.FAILED_NON_RETRYABLE) {
+        if (task.getStatus() == AsyncPaymentTaskStatus.SUCCEEDED) {
             transactionTemplate.execute(status ->
-                    taskRepository.save(task)
+                    taskRepository.save(task.toBuilder()
+                            .status(AsyncPaymentTaskStatus.SUCCEEDED)
+                            .nextAttemptAt(null)
+                            .build())
             );
             return;
         }
 
         transactionTemplate.execute(status ->
                 taskRepository.save(task.toBuilder()
-                        .status(AsyncPaymentTaskStatus.SUCCEEDED)
-                        .nextAttemptAt(null)
+                        .status(AsyncPaymentTaskStatus.NEW)
+                        .nextAttemptAt(OffsetDateTime.now())
                         .build())
         );
     }

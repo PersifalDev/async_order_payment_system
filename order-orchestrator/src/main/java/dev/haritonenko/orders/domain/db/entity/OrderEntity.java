@@ -4,6 +4,7 @@ import dev.haritonenko.orders.domain.status.PaymentStatus;
 import dev.haritonenko.orders.domain.converter.PaymentStatusConverter;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.UuidGenerator;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -21,7 +22,7 @@ public class OrderEntity {
 
     @Id
     @Column(name = "id", nullable = false, updatable = false)
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @UuidGenerator
     private UUID id;
 
     @Column(name = "address")
@@ -51,6 +52,10 @@ public class OrderEntity {
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
 
     @PrePersist
     public void onCreate() {

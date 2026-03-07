@@ -1,4 +1,3 @@
-
 spring:
   application:
     name: order-orchestrator
@@ -11,15 +10,6 @@ spring:
   liquibase:
     change-log: classpath:/db/changelog/changelog-master.yaml
 
-  docker:
-    compose:
-      file: ./infra/docker-compose.dev.yaml
-      lifecycle-management: start-only
-      start:
-        command: up
-
-
-# настройки Swagger
 springdoc:
   swagger-ui:
     path: /swagger-ui
@@ -40,13 +30,14 @@ clients:
 task-execution:
   dispatcher:
     thread-pool-size: ${TASK_EXEC_DISPATCHER_THREAD_POOL_SIZE:12}
+    queue-capacity: ${TASK_EXEC_DISPATCHER_QUEUE_CAPACITY:500}
     retry-delay: ${TASK_EXEC_DISPATCHER_RETRY_DELAY:5s}
     max-attempts: ${TASK_EXEC_DISPATCHER_MAX_ATTEMPTS:20}
 
   poller:
     poll-interval-ms: ${TASK_EXEC_POOL_INTERVAL_MS:1000}
     batch-size: ${TASK_EXEC_POOL_BATCH_SIZE:10}
-    retry-delay: ${TASK_EXEC_POOL_RETRY_DELAY_MS:30s}
+    retry-delay: ${TASK_EXEC_POOL_RETRY_DELAY_S:30s}
 
   external-http:
-    thread-pool-size: 12
+    thread-pool-size: ${TASK_EXEC_EXTERNAL_HTTP_THREAD_POOL_SIZE:12}

@@ -1,27 +1,43 @@
 package dev.haritonenko;
 
 import dev.haritonenko.tasks.domain.async.dispatcher.config.TaskDispatcherProperties;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 @Configuration
 public class CommonApplicationConfig {
+
 
     @Bean(destroyMethod = "shutdown")
     public ExecutorService taskDispatcherThreadPool(
             TaskDispatcherProperties properties
     ) {
-        return Executors.newFixedThreadPool(properties.getThreadPoolSize());
+        int poolSize = properties.getThreadPoolSize();
+        int queueCapacity = properties.getQueueCapacity();
+
+        return new ThreadPoolExecutor(
+                poolSize,
+                poolSize,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queueCapacity),
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
     }
 
     @Bean(destroyMethod = "shutdown")
     public ExecutorService externalHttpThreadPool(
-            @Value("${task-execution.external-http.thread-pool-size}") int threadPoolSize
+            TaskDispatcherProperties properties
     ) {
-        return Executors.newFixedThreadPool(threadPoolSize);
+        return new ThreadPoolExecutor(
+                properties.getThreadPoolSize(),
+                properties.getThreadPoolSize(),
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>( properties.getQueueCapacity()),
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
     }
 }

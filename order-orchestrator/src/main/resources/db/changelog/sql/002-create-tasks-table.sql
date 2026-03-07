@@ -14,3 +14,9 @@ CREATE TABLE IF NOT EXISTS tasks
 
 CREATE INDEX IF NOT EXISTS idx_tasks_order_id on tasks(order_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_next_attempt on tasks(task_status,next_attempt_at);
+
+ALTER TABLE tasks
+    ADD CONSTRAINT fk_tasks_order_id
+    FOREIGN KEY (order_id)
+    REFERENCES orders (id)
+    ON DELETE CASCADE;

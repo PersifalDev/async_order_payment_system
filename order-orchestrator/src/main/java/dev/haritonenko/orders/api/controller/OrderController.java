@@ -4,6 +4,7 @@ import dev.haritonenko.orders.api.dto.OrderCreateRequestDto;
 import dev.haritonenko.orders.api.dto.OrderDto;
 import dev.haritonenko.orders.domain.db.entity.OrderEntity;
 import dev.haritonenko.orders.domain.service.OrderService;
+import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -22,7 +23,7 @@ public class OrderController {
 
     @PostMapping
     public ResponseEntity<OrderDto> createOrder(
-            @RequestBody OrderCreateRequestDto orderCreateRequestDto
+           @Valid @RequestBody OrderCreateRequestDto orderCreateRequestDto
     ) {
         log.info("Received request to create order: request={}", orderCreateRequestDto);
         var created = orderService.createOrder(orderCreateRequestDto);

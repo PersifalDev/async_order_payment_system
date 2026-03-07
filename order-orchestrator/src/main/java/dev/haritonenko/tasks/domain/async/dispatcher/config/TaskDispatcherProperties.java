@@ -14,5 +14,6 @@ import java.time.Duration;
 public class TaskDispatcherProperties {
     private Duration retryDelay;
     private int threadPoolSize;
+    private int queueCapacity;
     private int maxAttempts;
 }
