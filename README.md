@@ -24,14 +24,14 @@
      - `SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/orders`
      - `SPRING_DATASOURCE_USERNAME=user`
      - `SPRING_DATASOURCE_PASSWORD=pass`
-     - `PAYMENT_STUB_URL=http://localhost:8081`
+     - `PAYMENT_STUB_URL=http://localhost:8084`
    - При необходимости переопредели их в конфигурации запуска.
 
 ## Полный стек (одна команда)
 ```bash
 docker compose -f infra/docker-compose.dev.yaml up --build
 ```
-По умолчанию: оркестратор на `http://localhost:8080`, стаб на `http://localhost:8081`, Postgres на `localhost:5432`.
+По умолчанию: оркестратор на `http://localhost:8080`, стаб на `http://localhost:8084`, Postgres на `localhost:5432`.
 
 ## Локальный запуск сервисов без Docker
 macOS/Linux:
@@ -48,7 +48,7 @@ Windows PowerShell:
 
 ## Swagger/UI
 - Оркестратор (если включен SpringDoc): `http://localhost:8080/swagger-ui/index.html`
-- Payment Stub: `http://localhost:8081/swagger-ui/index.html`
+- Payment Stub: `http://localhost:8084/swagger-ui/index.html`
 
 ## Compose команды
 - Старт общего стека (с пересборкой):

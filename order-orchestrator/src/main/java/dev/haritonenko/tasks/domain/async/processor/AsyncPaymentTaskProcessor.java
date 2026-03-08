@@ -12,6 +12,7 @@ import dev.haritonenko.orders.domain.exception.AuthorizedMoneyAmountLessThanFina
 import dev.haritonenko.orders.domain.exception.CapturingFailedException;
 import dev.haritonenko.orders.domain.exception.IllegalStateOfAuthorizedAmountException;
 import dev.haritonenko.orders.domain.exception.IllegalStateOfFinalAmountException;
+import dev.haritonenko.orders.domain.service.OrderService;
 import dev.haritonenko.orders.domain.status.PaymentStatus;
 import dev.haritonenko.orders.external.payment_stub.PaymentStubHttpClient;
 import dev.haritonenko.orders.external.warehouse.WarehouseHttpClient;
@@ -31,12 +32,15 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 
+import static java.util.Objects.isNull;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AsyncPaymentTaskProcessor {
 
     private final OrderJpaRepository orderRepository;
+    private final OrderService orderService;
     private final WarehouseHttpClient warehouseHttpClient;
     private final PaymentStubHttpClient paymentStubHttpClient;
     private final ExecutorService externalHttpThreadPool;
@@ -51,9 +55,8 @@ public class AsyncPaymentTaskProcessor {
 
         ProcessingStep stepAtStart = task.getProcessingStep();
 
-        boolean orderExists = Boolean.TRUE.equals(transactionTemplate.execute(status ->
-                orderRepository.existsById(orderId)
-        ));
+        boolean orderExists = orderService.existsOrderById(orderId);
+
         if (!orderExists) {
             log.warn("Order not found: id={}", orderId);
             return TaskExecutionStatus.NON_RETRYABLE_ERROR;
@@ -72,17 +75,25 @@ public class AsyncPaymentTaskProcessor {
 
             logCurrentProcessingStep(task);
 
+            var clientEstimate = getClientEstimate(orderId);
+
+
+            if (isNull(clientEstimate)) {
+                log.warn("Client estimate is null before authorization: orderId={}, taskId={}", orderId, taskId);
+                return TaskExecutionStatus.NON_RETRYABLE_ERROR;
+            }
             var authorizationPayment = paymentStubHttpClient.authorizePayment(
                     AuthorizePaymentRequestDto.builder()
                             .customerId(taskId)
-                            .amount(getClientEstimate(orderId))
+                            .amount(clientEstimate)
                             .build()
             );
+
 
             if (authorizationPayment.status() == AuthorizationStatus.DECLINED) {
                 log.warn("Authorization payment for order with id={} declined", orderId);
                 transactionTemplate.execute(status -> {
-                    var order = orderRepository.findById(orderId).orElseThrow();
+                    var order = findOrderById(orderId);
                     order.setPaymentStatus(PaymentStatus.AUTHORIZATION_FAILED);
                     order.setCancellationReason(authorizationPayment.message());
                     orderRepository.save(order);
@@ -95,7 +106,7 @@ public class AsyncPaymentTaskProcessor {
 
             log.info("Payment was authorized successfully for order with id={}", orderId);
             transactionTemplate.execute(status -> {
-                var order = orderRepository.findById(orderId).orElseThrow();
+                var order = findOrderById(orderId);
                 order.setAuthorizedAmount(authorizationPayment.authorizedAmount());
                 order.setPaymentStatus(PaymentStatus.AUTHORIZED_SUCCESSFULLY);
                 orderRepository.save(order);
@@ -119,8 +130,7 @@ public class AsyncPaymentTaskProcessor {
                         .thenApplyAsync(warehouseRepricingResult ->
                                 transactionTemplate.execute(status -> {
 
-                                    var order = orderRepository.findById(orderId).orElseThrow();
-
+                                    var order = findOrderById(orderId);
                                     BigDecimal authorizedAmount = order.getAuthorizedAmount();
                                     BigDecimal finalAmount = warehouseRepricingResult.finalAmount();
 
@@ -176,19 +186,9 @@ public class AsyncPaymentTaskProcessor {
 
                 repricingFuture
                         .thenCompose(warehouseRepricingResult -> {
-                            var optionalOrder = transactionTemplate.execute(status ->
-                                    orderRepository.findById(orderId)
-                            );
+                            var order = findOrderById(orderId);
 
-                            if (optionalOrder.isEmpty()) {
-                                log.warn("Error while searching for order with id={}", orderId);
-                                throw new IllegalStateException(
-                                        "Order not found before capture (orderId=%s, taskId=%s)"
-                                                .formatted(orderId, taskId)
-                                );
-                            }
-
-                            return getCapturePaymentFuture(optionalOrder.get(), task);
+                            return getCapturePaymentFuture(order, task);
                         })
                         .get();
                 task.setStatus(AsyncPaymentTaskStatus.SUCCEEDED);
@@ -197,16 +197,9 @@ public class AsyncPaymentTaskProcessor {
             }
 
             if (stepAtStart == ProcessingStep.CAPTURE) {
-                var optionalOrder = transactionTemplate.execute(status ->
-                        orderRepository.findById(orderId)
-                );
+                var order = findOrderById(orderId);
 
-                if (optionalOrder.isEmpty()) {
-                    log.warn("Error while finding order with id={}", orderId);
-                    return TaskExecutionStatus.NON_RETRYABLE_ERROR;
-                }
-
-                getCapturePaymentFuture(optionalOrder.get(), task).get();
+                getCapturePaymentFuture(order, task).get();
                 task.setStatus(AsyncPaymentTaskStatus.SUCCEEDED);
                 return TaskExecutionStatus.SUCCESS;
             }
@@ -257,7 +250,7 @@ public class AsyncPaymentTaskProcessor {
         return CompletableFuture
                 .supplyAsync(() -> {
                     BigDecimal finalAmount = transactionTemplate.execute(status -> {
-                        var order = orderRepository.findById(orderId).orElseThrow();
+                        var order = findOrderById(orderId);
                         return order.getFinalAmount();
                     });
 
@@ -283,7 +276,7 @@ public class AsyncPaymentTaskProcessor {
                             if (capturingPaymentResult.status() == CaptureStatus.FAILED) {
                                 log.warn("Capturing was rejected for order with id={}", orderId);
 
-                                var order = orderRepository.findById(orderId).orElseThrow();
+                                var order = findOrderById(orderId);
                                 order.setPaymentStatus(PaymentStatus.CAPTURE_FAILED);
                                 order.setCancellationReason("Capture failed by stub");
                                 orderRepository.save(order);
@@ -295,7 +288,7 @@ public class AsyncPaymentTaskProcessor {
 
                             log.info("Capturing was completed successfully for order with id={}", orderId);
 
-                            var order = orderRepository.findById(orderId).orElseThrow();
+                            var order = findOrderById(orderId);
                             order.setCapturedAmount(capturingPaymentResult.capturedAmount());
                             order.setPaymentStatus(PaymentStatus.SUCCEED_PAID);
                             orderRepository.save(order);
@@ -335,5 +328,14 @@ public class AsyncPaymentTaskProcessor {
             current = current.getCause();
         }
         return current;
+    }
+
+    private OrderEntity findOrderById(UUID orderId) {
+        return orderService.findOrder(orderId).orElseThrow(
+                () -> new IllegalStateException(
+                        "Order not found during async payment processing (orderId=%s)"
+                                .formatted(orderId)
+                )
+        );
     }
 }

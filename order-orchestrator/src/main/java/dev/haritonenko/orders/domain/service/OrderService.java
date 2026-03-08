@@ -60,7 +60,13 @@ public class OrderService {
         });
     }
 
-    public Optional<OrderEntity> findOrder(UUID id) {
+    public boolean existsOrderById(UUID orderId){
+        return Boolean.TRUE.equals(txTemplate.execute(status ->
+                orderRepository.existsById(orderId)
+        ));
+    }
+
+    public Optional<OrderEntity> findOrder (UUID id) {
         return orderRepository.findById(id);
     }
 }
