@@ -15,18 +15,18 @@ java {
 dependencies {
     implementation(project(":common-libs"))
 
-    //  spring starters
+
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
 
-    //  tests
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-    // additional libs
-    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0")
 
-    //  lombok
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9")
+
+
     implementation("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
     testCompileOnly("org.projectlombok:lombok")

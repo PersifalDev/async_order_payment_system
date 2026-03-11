@@ -7,6 +7,13 @@ services:
       POSTGRES_PASSWORD: pass
     ports:
       - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d orders"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   payment-stub:
     image: payment-stub:latest
@@ -14,9 +21,9 @@ services:
       context: ..
       dockerfile: payment-stub/Dockerfile
     environment:
-      SERVER_PORT: 8081
+      SERVER_PORT: 8084
     ports:
-      - "8081:8081"
+      - "8084:8084"
 
   order-orchestrator:
     image: order-orchestrator:latest
@@ -28,9 +35,16 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orders
       SPRING_DATASOURCE_USERNAME: user
       SPRING_DATASOURCE_PASSWORD: pass
-      PAYMENT_STUB_URL: http://payment-stub:8081
+      PAYMENT_STUB_URL: http://payment-stub:8084
+      PAYMENT_STUB_BASE_URL: http://payment-stub:8084/payment
+      WAREHOUSE_BASE_URL: http://payment-stub:8084/warehouse
     ports:
       - "8080:8080"
     depends_on:
-      - postgres
-      - payment-stub
+      postgres:
+        condition: service_healthy
+      payment-stub:
+        condition: service_started
+
+volumes:
+  pgdata:

@@ -13,7 +13,7 @@ HTTP-стады платежного шлюза и сервиса пересчё
   - Request: `{ "orderId": "UUID" }`
   - Response: `{ "orderId": "UUID", "finalAmount": 1234, "reason": "Price calculated by stub" }`
 
-Swagger UI: `http://localhost:8081/swagger-ui/index.html` (можно отключить флагами SpringDoc).
+Swagger UI: `http://localhost:8084/swagger-ui/index.html` (можно отключить флагами SpringDoc).
 
 ## Конфигурация (env)
 Все параметры могут задаваться через переменные окружения, дефолты прописаны в `application.yml`.
@@ -44,4 +44,4 @@ Swagger UI: `http://localhost:8081/swagger-ui/index.html` (можно отклю
 
 ## Docker
 - Dockerfile в корне модуля.
-- В составе стека поднимается через `infra/docker-compose.dev.yaml` на порту 8081.
+- В составе стека поднимается через `infra/docker-compose.dev.yaml` на порту 8084.

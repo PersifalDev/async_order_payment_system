@@ -21,9 +21,8 @@ stub:
     final-amount-min: ${STUB_WAREHOUSE_FINAL_AMOUNT_MIN:100}
     final-amount-max: ${STUB_WAREHOUSE_FINAL_AMOUNT_MAX:10000}
 
-# настройки Swagger
 springdoc:
   swagger-ui:
     path: /swagger-ui
 server:
-  port: ${SERVER_PORT:8081}
+  port: ${SERVER_PORT:8084}
