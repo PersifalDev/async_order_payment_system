@@ -26,7 +26,3 @@
 - Для разработки через IDE можно поднять только инфраструктуру: `order-orchestrator/docker-compose.dev.yaml`.
 - Для полного запуска см. `infra/docker-compose.dev.yaml`.
 
-## Что делает студент
-- Добавляет недостающие поля/таблицы (orders/payments/payment_tasks).
-- Реализует оркестрацию (AUTH → REPRICE → CAPTURE/FAIL) в сервисе задач.
-- Настраивает клиенты к платежке/складу и транзакционный outbox/poller.
